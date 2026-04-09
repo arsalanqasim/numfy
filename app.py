@@ -41,16 +41,20 @@ def fetch_sim_data_stealth(query):
         if not table:
             return "No records found. The site might have returned an empty page."
 
-        rows = table.find('tbody').find_all('tr')
+        # Extract all rows from the table directly (handles missing tbody safely)
+        rows = table.find_all('tr')
         results = []
         for row in rows:
-            cols = row.find_all('td')
-            if len(cols) >= 4:
+            cols = row.find_all(['td', 'th']) # some tables might use th for data by mistake, but we focus on columns
+            
+            # Usually the first row is headers. We can check if it's actual data by the number of cols
+            # Only process if we have enough columns and it is not a header row
+            if len(cols) >= 4 and cols[0].name == 'td':
                 results.append({
-                    "Mobile": cols.text.strip(),
-                    "Name": cols.text.strip(),
-                    "CNIC": cols.text.strip(),
-                    "Address": cols.text.strip()
+                    "Mobile": cols[0].text.strip(),
+                    "Name": cols[1].text.strip(),
+                    "CNIC": cols[2].text.strip(),
+                    "Address": cols[3].text.strip()
                 })
         return results
 
