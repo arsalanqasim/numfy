@@ -1,73 +1,76 @@
 import streamlit as st
-import requests
+from curl_cffi import requests # Upgraded for TLS fingerprinting
 from bs4 import BeautifulSoup
 
-# --- Scraper Engine ---
-def fetch_sim_data(query):
+def fetch_sim_data_stealth(query):
+    # 'impersonate' makes the request look exactly like a real Chrome browser
     session = requests.Session()
     base_url = "https://paksiminfo.org/"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": base_url,
     }
 
     try:
-        # 1. Get CSRF Token
-        response = session.get(base_url, headers=headers)
+        # 1. Warm up the session (GET)
+        response = session.get(base_url, headers=headers, impersonate="chrome120")
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Finding the token in the meta tag (per your previous output)
+        # 2. Extract CSRF token
         csrf_tag = soup.find('meta', {'name': 'csrf-token'})
         csrf_token = csrf_tag['content'] if csrf_tag else None
 
         if not csrf_token:
-            return "Error: Could not retrieve security token."
+            return "Error: Could not find CSRF token. The site might be blocking you."
 
-        # 2. Submit the Search
-        payload = {
-            'csrf_token': csrf_token,
-            'query': query
-        }
+        # 3. Perform Search (POST)
+        payload = {'csrf_token': csrf_token, 'query': query}
+        post_response = session.post(base_url, data=payload, headers=headers, impersonate="chrome120")
         
-        post_response = session.post(base_url, data=payload, headers=headers)
+        # --- DEBUG CHECK ---
+        if "Verify you are human" in post_response.text or "Cloudflare" in post_response.text:
+            return "BLOCKED: The website is asking for a CAPTCHA. Try again later or solve one in your browser first."
+
+        # 4. Parse Results
         result_soup = BeautifulSoup(post_response.text, 'html.parser')
-        
-        # 3. Parse the Table
         table = result_soup.find('table', {'id': 'resultsTable'})
+        
         if not table:
-            return "No records found for this number."
+            return "No records found. The site might have returned an empty page."
 
         rows = table.find('tbody').find_all('tr')
         results = []
         for row in rows:
             cols = row.find_all('td')
-            results.append({
-                "Mobile": cols.text.strip(),
-                "Name": cols.text.strip(),
-                "CNIC": cols.text.strip(),
-                "Address": cols.text.strip()
-            })
+            if len(cols) >= 4:
+                results.append({
+                    "Mobile": cols.text.strip(),
+                    "Name": cols.text.strip(),
+                    "CNIC": cols.text.strip(),
+                    "Address": cols.text.strip()
+                })
         return results
 
     except Exception as e:
-        return f"Connection Error: {str(e)}"
+        return f"System Error: {str(e)}"
 
-# --- Web Interface (Streamlit) ---
-st.set_page_config(page_title="SIM Finder", page_icon="🔍")
+# --- Streamlit UI ---
+st.title("🔍 Pak SIM Stealth Lookup")
 
-st.title("🇵🇰 Pak SIM Info Lookup")
-st.markdown("Enter a phone number or CNIC to retrieve registration details.")
+target = st.text_input("Enter Number", value="03331390228")
 
-target_input = st.text_input("Number/CNIC", placeholder="e.g. 03331390228")
-
-if st.button("Search Details"):
-    if target_input:
-        with st.spinner('Accessing database...'):
-            data = fetch_sim_data(target_input)
-            
-            if isinstance(data, list):
-                st.success(f"Found {len(data)} record(s)")
-                st.table(data)
-            else:
-                st.error(data)
-    else:
-        st.warning("Please enter a value first.")
+if st.button("Search"):
+    with st.spinner("Bypassing security..."):
+        data = fetch_sim_data_stealth(target)
+        if isinstance(data, list):
+            st.success("Data Retrieved!")
+            st.table(data)
+        else:
+            st.error(data)
+            # Show a snippet of what the site actually sent back
+            with st.expander("See Raw Debug Info"):
+                st.write("This is what the server sent instead of data:")
+                st.code(data[:500])
